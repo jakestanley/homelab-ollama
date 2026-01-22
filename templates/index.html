@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Homelab Ollama Control</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f2ee;
+        --card: #ffffff;
+        --ink: #141414;
+        --muted: #5a5a5a;
+        --accent: #2b6df6;
+        --danger: #c62828;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+        background: radial-gradient(circle at 10% 20%, #fff8ec 0%, #f5f2ee 55%, #efeae4 100%);
+        color: var(--ink);
+      }
+
+      main {
+        max-width: 720px;
+        margin: 40px auto;
+        padding: 24px;
+      }
+
+      .card {
+        background: var(--card);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 12px 30px rgba(20, 20, 20, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      .muted {
+        color: var(--muted);
+        margin: 0 0 20px;
+      }
+
+      .status {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 20px;
+        font-size: 16px;
+      }
+
+      .status span {
+        font-weight: 600;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 18px;
+        font-size: 15px;
+        cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .primary {
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 6px 14px rgba(43, 109, 246, 0.25);
+      }
+
+      .danger {
+        background: #fef0f0;
+        color: var(--danger);
+        border: 1px solid rgba(198, 40, 40, 0.2);
+      }
+
+      .outline {
+        background: white;
+        border: 1px solid rgba(20, 20, 20, 0.15);
+      }
+
+      .log {
+        margin-top: 20px;
+        padding: 12px;
+        background: #f7f7f7;
+        border-radius: 10px;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 13px;
+        color: #333;
+        min-height: 48px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="card">
+        <h1>Ollama Control</h1>
+        <p class="muted">Start, stop, and check the local Ollama runtime.</p>
+        <div class="status" id="status">
+          <div>Overall: <span id="overall">Loading...</span></div>
+          <div>Process: <span id="process">Loading...</span></div>
+          <div>Port: <span id="port">Loading...</span></div>
+          <div>PIDs: <span id="pids">Loading...</span></div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="start">Start</button>
+          <button class="danger" id="stop">Stop</button>
+          <button class="outline" id="refresh">Refresh</button>
+        </div>
+        <div class="log" id="log">Waiting for action...</div>
+      </div>
+    </main>
+
+    <script>
+      const overall = document.getElementById("overall");
+      const process = document.getElementById("process");
+      const port = document.getElementById("port");
+      const pids = document.getElementById("pids");
+      const log = document.getElementById("log");
+
+      const updateStatus = (payload) => {
+        overall.textContent = payload.running ? "Running" : "Stopped";
+        process.textContent = payload.process_running ? "Active" : "Not detected";
+        port.textContent = payload.port_open ? `Open (${payload.ollama_host}:${payload.ollama_port})` : "Closed";
+        pids.textContent = payload.pids.length ? payload.pids.join(", ") : "-";
+      };
+
+      const request = async (endpoint, method = "GET") => {
+        const response = await fetch(endpoint, { method });
+        const payload = await response.json();
+        updateStatus(payload);
+        log.textContent = `${new Date().toLocaleTimeString()} -> ${payload.status || "status"}`;
+      };
+
+      document.getElementById("start").addEventListener("click", () => request("/api/start", "POST"));
+      document.getElementById("stop").addEventListener("click", () => request("/api/stop", "POST"));
+      document.getElementById("refresh").addEventListener("click", () => request("/api/status"));
+
+      request("/api/status");
+    </script>
+  </body>
+</html>
