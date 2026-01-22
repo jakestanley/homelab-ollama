@@ -48,6 +48,14 @@ Or use the helper script:
 
 ## NSSM service example
 
+Preferred installation/update helper:
+
+```powershell
+.\scripts\install-service.ps1 -Start
+```
+
+Manual NSSM example:
+
 ```powershell
 nssm install homelab-ollama "C:\\Path\\To\\python.exe" "C:\\Path\\To\\homelab-ollama\\app.py"
 nssm set homelab-ollama AppDirectory "C:\\Path\\To\\homelab-ollama"
