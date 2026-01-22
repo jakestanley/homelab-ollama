@@ -44,17 +44,55 @@ function Test-PrivateTcpFirewallRuleExists {
     [string]$Port
   )
 
-  $rules = Get-NetFirewallRule -Direction Inbound -ErrorAction SilentlyContinue | Where-Object {
-    $_.Profile -eq "Any" -or $_.Profile -match "Private"
+  function Test-PortMatch {
+    param(
+      [string]$LocalPort,
+      [string]$TargetPort
+    )
+
+    if (-not $LocalPort -or $LocalPort -eq "Any") {
+      return $false
+    }
+
+    if ($LocalPort -eq $TargetPort) {
+      return $true
+    }
+
+    if ($LocalPort -match ',') {
+      foreach ($part in ($LocalPort -split ',')) {
+        if (Test-PortMatch -LocalPort $part.Trim() -TargetPort $TargetPort) {
+          return $true
+        }
+      }
+    }
+
+    if ($LocalPort -match '^\d+-\d+$') {
+      $bounds = $LocalPort -split '-'
+      $start = [int]$bounds[0]
+      $end = [int]$bounds[1]
+      $value = [int]$TargetPort
+      if ($value -ge $start -and $value -le $end) {
+        return $true
+      }
+    }
+
+    return $false
   }
 
+  $portFilters = Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {
+    Test-PortMatch -LocalPort $_.LocalPort -TargetPort $Port
+  }
+  if ($null -eq $portFilters) {
+    return $false
+  }
+
+  $rules = Get-NetFirewallRule -AssociatedNetFirewallPortFilter $portFilters -ErrorAction SilentlyContinue
   foreach ($rule in $rules) {
-    $portFilter = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue
-    if ($null -eq $portFilter) {
+    if ($rule.Direction -ne "Inbound") {
       continue
     }
 
-    if ($portFilter.Protocol -eq "TCP" -and $portFilter.LocalPort -eq $Port) {
+    if ($rule.Profile -eq "Any" -or $rule.Profile -match "Private") {
       return $true
     }
   }
