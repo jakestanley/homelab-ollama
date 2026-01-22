@@ -1,0 +1,4 @@
+imported/
+.env
+.env.*
+!.env.example
