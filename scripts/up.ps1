@@ -12,6 +12,8 @@ if (-not (Test-Path $envFile)) {
   Write-Warning "Missing .env file; copy .env.example and update SERVICE_PORT."
 }
 
+$repoName = Split-Path -Leaf $root
+
 function Get-EnvValue {
   param(
     [string]$Path,
@@ -82,7 +84,7 @@ function Test-PrivateTcpFirewallRuleExists {
   $portFilters = Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {
     Test-PortMatch -LocalPort $_.LocalPort -TargetPort $Port
   }
-  if ($null -eq $portFilters) {
+  if (-not $portFilters) {
     return $false
   }
 
@@ -106,7 +108,8 @@ if (-not $servicePort -and $env:SERVICE_PORT) {
 }
 
 if ($servicePort) {
-  $firewallCommand = "New-NetFirewallRule -DisplayName `"homelab-ollama ($servicePort)`" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private"
+  $ruleName = "$repoName ($servicePort)"
+  $firewallCommand = "New-NetFirewallRule -DisplayName `"$ruleName`" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private"
 
   if (-not (Test-IsAdministrator)) {
     Write-Warning "Not running elevated; Windows Firewall rule not ensured."
@@ -114,7 +117,7 @@ if ($servicePort) {
     Write-Host $firewallCommand
   } else {
     if (-not (Test-PrivateTcpFirewallRuleExists -Port $servicePort)) {
-      New-NetFirewallRule -DisplayName "homelab-ollama ($servicePort)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private | Out-Null
+      New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private | Out-Null
     }
   }
 } else {
