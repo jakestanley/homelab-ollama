@@ -48,6 +48,18 @@ $envLines = Get-Content -Path $envFile | Where-Object {
   $_ -and $_ -notmatch '^\s*#'
 }
 
+
+# Auto-detect OLLAMA_EXE if not set (service PATH may differ from your shell).
+$envLines = @($envLines)
+$hasOllamaExe = $envLines | Where-Object { $_ -match "^OLLAMA_EXE=" }
+if (-not $hasOllamaExe) {
+  $cmd = Get-Command ollama.exe -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source) {
+    $envLines = @("OLLAMA_EXE=$($cmd.Source)") + $envLines
+  } else {
+    Write-Warning "OLLAMA_EXE is not set and ollama.exe was not found on PATH. Set OLLAMA_EXE in .env to a full path."
+  }
+}
 if ($envLines) {
   # Store each VAR=VALUE as a separate multi-string entry
   & nssm set $ServiceName AppEnvironmentExtra @($envLines) | Out-Null

@@ -13,13 +13,32 @@ Canonical standards live in the sibling repository `homelab-standards`.
 
 ## API
 
+### Runtime control
+
 - `GET /api/status` -> running state + PIDs
 - `POST /api/start` -> start Ollama (idempotent)
 - `POST /api/stop` -> stop Ollama (idempotent)
 
+### Models
+
+- `GET /api/models` -> list cached models (via Ollama `GET /api/tags`)
+
+### JSONL batch jobs
+
+- `POST /api/jobs` (multipart form)
+  - fields: `file` (JSONL), `prompt` (text), `model` (text), `auto_pull_model` (`1`/`0`, default `1`)
+  - returns: `{ "id": "..." }`
+- `GET /api/jobs/<id>` -> job status/metadata
+- `GET /api/jobs/<id>/output` -> download processed `output.jsonl`
+
+Output format: one JSON object per processed input line, containing at least:
+`line`, `input`, `model`, and either `output` or `error`.
+
+Job state is stored under `STATE_DIR/jobs/<id>/`.
+
 ## UI
 
-Visit `/` to view the control panel and status.
+Visit `/` to view the control panel and JSONL batch processor.
 
 ## Setup
 
@@ -67,6 +86,7 @@ service port matches `homelab-infra/registry.yaml`.
 
 ## Notes
 
-- This service does not manage Ollama models or authentication.
-- Ollama listens on its own port (default `11434`); this service only controls
-  the local process.
+- If Ollama is installed via Scoop or user PATH, NSSM running as LocalSystem may not find it; set `OLLAMA_EXE` to a full path or run the service as your user.
+- Ollama listens on its own port (default `11434`); this service only controls the local process and proxies nothing.
+- JSONL jobs call the local Ollama HTTP API per line; keep prompts concise for performance.
+- `MAX_UPLOAD_MB` limits upload size and `JOBS_MAX_WORKERS` limits concurrency.

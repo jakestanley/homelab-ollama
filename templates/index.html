@@ -13,6 +13,8 @@
         --muted: #5a5a5a;
         --accent: #2b6df6;
         --danger: #c62828;
+        --ok: #1b7f3a;
+        --warn: #9a6a00;
       }
 
       body {
@@ -23,9 +25,11 @@
       }
 
       main {
-        max-width: 720px;
+        max-width: 980px;
         margin: 40px auto;
         padding: 24px;
+        display: grid;
+        gap: 18px;
       }
 
       .card {
@@ -38,6 +42,11 @@
       h1 {
         margin: 0 0 8px;
         font-size: 28px;
+      }
+
+      h2 {
+        margin: 0 0 8px;
+        font-size: 20px;
       }
 
       .muted {
@@ -60,6 +69,7 @@
         display: flex;
         gap: 12px;
         flex-wrap: wrap;
+        align-items: center;
       }
 
       button {
@@ -101,6 +111,82 @@
         font-size: 13px;
         color: #333;
         min-height: 48px;
+        white-space: pre-wrap;
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+      }
+
+      input[type="text"],
+      textarea {
+        border-radius: 12px;
+        border: 1px solid rgba(20, 20, 20, 0.15);
+        padding: 10px 12px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      input[type="file"] {
+        font-size: 14px;
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      @media (max-width: 840px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(20, 20, 20, 0.06);
+        font-size: 13px;
+      }
+
+      .pill.ok {
+        background: rgba(27, 127, 58, 0.12);
+        color: var(--ok);
+      }
+
+      .pill.warn {
+        background: rgba(154, 106, 0, 0.12);
+        color: var(--warn);
+      }
+
+      .pill.bad {
+        background: rgba(198, 40, 40, 0.12);
+        color: var(--danger);
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
       }
     </style>
   </head>
@@ -122,6 +208,61 @@
         </div>
         <div class="log" id="log">Waiting for action...</div>
       </div>
+
+      <div class="card">
+        <h2>JSONL Batch Processor</h2>
+        <p class="muted">
+          Upload a JSONL file, provide a prompt, choose a model, and run a background job. When complete, download the
+          processed JSONL.
+        </p>
+
+        <div class="actions" style="margin-bottom: 14px">
+          <span class="pill" id="models-pill">Models: <strong id="models-count">?</strong></span>
+          <button class="outline" id="models-refresh">Refresh models</button>
+          <span class="pill" id="models-error" style="display: none"></span>
+        </div>
+
+        <form id="job-form" class="grid">
+          <div class="row">
+            <label>
+              Model
+              <input type="text" id="model" name="model" list="models" placeholder="e.g. llama3.2:latest" required />
+              <datalist id="models"></datalist>
+            </label>
+
+            <label>
+              JSONL file
+              <input type="file" id="file" name="file" accept=".jsonl,application/json" required />
+            </label>
+          </div>
+
+          <label>
+            Prompt (applied to every line)
+            <textarea id="prompt" name="prompt" placeholder="Example: Summarize the input JSON and extract key fields." required></textarea>
+          </label>
+
+          <label style="display: flex; gap: 10px; align-items: center">
+            <input type="checkbox" id="auto_pull_model" name="auto_pull_model" checked />
+            Auto-pull model if missing
+          </label>
+
+          <div class="actions">
+            <button class="primary" type="submit">Submit job</button>
+            <span class="pill" id="job-status" style="display: none"></span>
+          </div>
+        </form>
+
+        <div class="log" id="job-log">No job running.</div>
+
+        <div class="actions" style="margin-top: 12px">
+          <label style="max-width: 420px">
+            Existing job ID
+            <input type="text" id="job-id" placeholder="Paste a job id to resume polling" />
+          </label>
+          <button class="outline" id="job-poll">Poll</button>
+          <a id="job-download" href="#" style="display: none">Download output.jsonl</a>
+        </div>
+      </div>
     </main>
 
     <script>
@@ -131,6 +272,25 @@
       const pids = document.getElementById("pids");
       const log = document.getElementById("log");
 
+      const jobLog = document.getElementById("job-log");
+      const jobStatusPill = document.getElementById("job-status");
+      const jobIdInput = document.getElementById("job-id");
+      const jobDownload = document.getElementById("job-download");
+
+      const modelsDatalist = document.getElementById("models");
+      const modelsCount = document.getElementById("models-count");
+      const modelsPill = document.getElementById("models-pill");
+      const modelsError = document.getElementById("models-error");
+
+      let pollTimer = null;
+
+      const setPill = (el, text, kind) => {
+        el.style.display = "inline-flex";
+        el.textContent = text;
+        el.classList.remove("ok", "warn", "bad");
+        if (kind) el.classList.add(kind);
+      };
+
       const updateStatus = (payload) => {
         overall.textContent = payload.running ? "Running" : "Stopped";
         process.textContent = payload.process_running ? "Active" : "Not detected";
@@ -138,18 +298,156 @@
         pids.textContent = payload.pids.length ? payload.pids.join(", ") : "-";
       };
 
-      const request = async (endpoint, method = "GET") => {
+      const requestStatus = async (endpoint, method = "GET") => {
         const response = await fetch(endpoint, { method });
         const payload = await response.json();
         updateStatus(payload);
         log.textContent = `${new Date().toLocaleTimeString()} -> ${payload.status || "status"}`;
       };
 
-      document.getElementById("start").addEventListener("click", () => request("/api/start", "POST"));
-      document.getElementById("stop").addEventListener("click", () => request("/api/stop", "POST"));
-      document.getElementById("refresh").addEventListener("click", () => request("/api/status"));
+      const refreshModels = async () => {
+        modelsError.style.display = "none";
+        modelsPill.classList.remove("bad");
 
-      request("/api/status");
+        try {
+          const res = await fetch("/api/models");
+          const payload = await res.json();
+
+          modelsDatalist.innerHTML = "";
+          const models = payload.models || [];
+          models.forEach((name) => {
+            const option = document.createElement("option");
+            option.value = name;
+            modelsDatalist.appendChild(option);
+          });
+
+          modelsCount.textContent = String(models.length);
+          if (!res.ok) {
+            setPill(modelsError, payload.error || "Failed to list models", "bad");
+            modelsPill.classList.add("bad");
+          }
+        } catch (err) {
+          modelsCount.textContent = "0";
+          setPill(modelsError, String(err), "bad");
+          modelsPill.classList.add("bad");
+        }
+      };
+
+      const stopPolling = () => {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      };
+
+      const pollJob = async (jobId) => {
+        if (!jobId) return;
+
+        const update = async () => {
+          try {
+            const res = await fetch(`/api/jobs/${jobId}`);
+            if (!res.ok) {
+              setPill(jobStatusPill, `Not found: ${jobId}`, "bad");
+              jobLog.textContent = "";
+              jobDownload.style.display = "none";
+              stopPolling();
+              return;
+            }
+
+            const meta = await res.json();
+            const status = meta.status || "unknown";
+            const processed = meta.processed_lines ?? 0;
+            const total = meta.total_lines ?? 0;
+            const errors = meta.error_lines ?? 0;
+            const message = meta.message || "";
+
+            const pillKind = status === "completed" ? "ok" : status === "failed" ? "bad" : "warn";
+            setPill(jobStatusPill, `${status} • ${processed}/${total} • errors: ${errors}`, pillKind);
+
+            jobLog.textContent = [
+              `id: ${meta.id}`,
+              `status: ${status}`,
+              message ? `message: ${message}` : null,
+              meta.started_at ? `started_at: ${meta.started_at}` : null,
+              meta.finished_at ? `finished_at: ${meta.finished_at}` : null,
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+            if (status === "completed") {
+              jobDownload.href = `/api/jobs/${jobId}/output`;
+              jobDownload.style.display = "inline";
+              stopPolling();
+            } else if (status === "failed") {
+              jobDownload.style.display = "none";
+              stopPolling();
+            }
+          } catch (err) {
+            setPill(jobStatusPill, `Poll error: ${err}`, "bad");
+            stopPolling();
+          }
+        };
+
+        stopPolling();
+        jobIdInput.value = jobId;
+        jobDownload.style.display = "none";
+        await update();
+        pollTimer = setInterval(update, 1500);
+      };
+
+      document.getElementById("start").addEventListener("click", () => requestStatus("/api/start", "POST"));
+      document.getElementById("stop").addEventListener("click", () => requestStatus("/api/stop", "POST"));
+      document.getElementById("refresh").addEventListener("click", () => requestStatus("/api/status"));
+
+      document.getElementById("models-refresh").addEventListener("click", (e) => {
+        e.preventDefault();
+        refreshModels();
+      });
+
+      document.getElementById("job-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        jobDownload.style.display = "none";
+        setPill(jobStatusPill, "Submitting...", "warn");
+
+        const form = new FormData();
+        form.append("model", document.getElementById("model").value);
+        form.append("prompt", document.getElementById("prompt").value);
+        form.append("auto_pull_model", document.getElementById("auto_pull_model").checked ? "1" : "0");
+
+        const file = document.getElementById("file").files[0];
+        if (!file) {
+          setPill(jobStatusPill, "Missing file", "bad");
+          return;
+        }
+        form.append("file", file, file.name);
+
+        try {
+          const res = await fetch("/api/jobs", { method: "POST", body: form });
+          const payload = await res.json();
+
+          if (!res.ok) {
+            setPill(jobStatusPill, payload.error || "Failed to submit", "bad");
+            jobLog.textContent = JSON.stringify(payload, null, 2);
+            return;
+          }
+
+          const jobId = payload.id;
+          jobLog.textContent = `Submitted job: ${jobId}`;
+          await pollJob(jobId);
+        } catch (err) {
+          setPill(jobStatusPill, `Submit error: ${err}`, "bad");
+        }
+      });
+
+      document.getElementById("job-poll").addEventListener("click", async (e) => {
+        e.preventDefault();
+        const id = (jobIdInput.value || "").trim();
+        if (!id) return;
+        await pollJob(id);
+      });
+
+      requestStatus("/api/status");
+      refreshModels();
     </script>
   </body>
 </html>

@@ -124,4 +124,16 @@ if ($servicePort) {
   Write-Warning "SERVICE_PORT is not set; skipping Windows Firewall rule check."
 }
 
+
+# Ensure OLLAMA_EXE is resolvable in this environment (Windows services often do not inherit user PATH).
+$ollamaExe = Get-EnvValue -Path $envFile -Key "OLLAMA_EXE"
+if (-not $ollamaExe -and $env:OLLAMA_EXE) { $ollamaExe = $env:OLLAMA_EXE }
+if (-not $ollamaExe) {
+  $cmd = Get-Command ollama.exe -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source) {
+    $env:OLLAMA_EXE = $cmd.Source
+  } else {
+    Write-Warning "ollama.exe not found on PATH for this process. If running via NSSM, set OLLAMA_EXE to a full path in .env or run the service as the user that has ollama installed."
+  }
+}
 & $venvPython (Join-Path $root "app.py")
