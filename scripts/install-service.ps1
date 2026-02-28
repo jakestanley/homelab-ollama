@@ -10,7 +10,7 @@ if (-not $ServiceName) {
   $ServiceName = Split-Path -Leaf $root
 }
 
-$displayName = "Homelab Ollama"
+$displayName = "homelab-ollama"
 $description = "Controls local Ollama runtime via HTTP API"
 
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
