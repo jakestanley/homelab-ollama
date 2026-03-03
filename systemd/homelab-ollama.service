@@ -1,0 +1,20 @@
+[Unit]
+Description=homelab-ollama API service
+
+[Service]
+Type=simple
+User=homelab-ollama
+Group=homelab-ollama
+WorkingDirectory=/srv/homelab-ollama
+EnvironmentFile=/etc/homelab-ollama/homelab-ollama.env
+ExecStart=/srv/homelab-ollama/scripts/up.sh
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -31,7 +31,9 @@ OLLAMA_EXE = os.getenv("OLLAMA_EXE", "ollama")
 OLLAMA_ARGS = os.getenv("OLLAMA_ARGS", "serve")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
-OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", "ollama.exe")
+DEFAULT_OLLAMA_PROCESS_NAME = "ollama.exe" if os.name == "nt" else "ollama"
+OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", DEFAULT_OLLAMA_PROCESS_NAME)
+OLLAMA_MANAGED_BY_SERVICE = os.getenv("OLLAMA_MANAGED_BY_SERVICE", "0") not in {"0", "false", "False"}
 OLLAMA_REQUIRE_SERVE = os.getenv("OLLAMA_REQUIRE_SERVE", "1") not in {"0", "false", "False"}
 OLLAMA_STOP_SCOPE = os.getenv("OLLAMA_STOP_SCOPE", "all").lower()
 
@@ -137,11 +139,36 @@ def current_status() -> dict:
         "pids": [proc.pid for proc in processes],
         "ollama_host": OLLAMA_HOST,
         "ollama_port": OLLAMA_PORT,
+        "managed_by_service": OLLAMA_MANAGED_BY_SERVICE,
     }
+
+
+def _ollama_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    if not env.get("HOME"):
+        ensure_state_dir()
+        env["HOME"] = str(STATE_DIR)
+    return env
+
+
+def _schedule_service_restart(delay_seconds: float = 0.2) -> None:
+    def _exit_process() -> None:
+        os._exit(1)
+
+    timer = threading.Timer(delay_seconds, _exit_process)
+    timer.daemon = True
+    timer.start()
 
 
 def start_ollama() -> dict:
     status = current_status()
+    if OLLAMA_MANAGED_BY_SERVICE:
+        return {
+            "status": "service_managed",
+            "message": "Ollama is managed by the service lifecycle. Start or restart the service instead.",
+            **status,
+        }
+
     if status["running"]:
         return {"status": "already_running", **status}
 
@@ -165,6 +192,7 @@ def start_ollama() -> dict:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creation_flags,
+            env=_ollama_subprocess_env(),
         )
     except FileNotFoundError:
         return {"status": "error", "error": f"Ollama executable not found: {OLLAMA_EXE}"}
@@ -186,6 +214,13 @@ def start_ollama() -> dict:
 
 def stop_ollama() -> dict:
     status = current_status()
+    if OLLAMA_MANAGED_BY_SERVICE:
+        return {
+            "status": "service_managed",
+            "message": "Ollama is managed by the service lifecycle. Stop the service to stop Ollama.",
+            **status,
+        }
+
     if not status["running"]:
         return {"status": "already_stopped", **status}
 
@@ -219,6 +254,43 @@ def stop_ollama() -> dict:
     time.sleep(0.4)
     status = current_status()
     return {"status": "stopped", **status}
+
+
+def restart_ollama() -> dict:
+    status = current_status()
+
+    if OLLAMA_MANAGED_BY_SERVICE:
+        write_state(
+            {
+                "last_action": "restart",
+                "last_pid": status["pids"][0] if status["pids"] else None,
+                "last_restarted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        )
+        _schedule_service_restart()
+        return {
+            "status": "restarting",
+            "message": "Service-managed restart requested. The service will reconnect after systemd restarts it.",
+            **status,
+        }
+
+    was_running = status["running"]
+    if was_running:
+        stop_result = stop_ollama()
+        if stop_result.get("running"):
+            return {
+                "status": "error",
+                "message": "Failed to stop Ollama before restart.",
+                **stop_result,
+            }
+
+    start_result = start_ollama()
+    restart_status = "restarted" if was_running else start_result.get("status", "started")
+    return {
+        **start_result,
+        "status": restart_status,
+        "message": "Ollama restart requested.",
+    }
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
@@ -306,6 +378,7 @@ def _pull_model_cli(model: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=60 * 60,
+            env=_ollama_subprocess_env(),
         )
     except FileNotFoundError:
         return False, f"Ollama executable not found: {OLLAMA_EXE}"
@@ -527,6 +600,11 @@ def api_stop():
     return jsonify(stop_ollama())
 
 
+@app.post("/api/restart")
+def api_restart():
+    return jsonify(restart_ollama())
+
+
 @app.get("/api/models")
 def api_models():
     try:
@@ -622,6 +700,11 @@ def index():
     return render_template("index.html")
 
 
-if __name__ == "__main__":
+def main() -> int:
     ensure_state_dir()
     app.run(host=SERVICE_HOST, port=SERVICE_PORT)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
