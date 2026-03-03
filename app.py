@@ -33,6 +33,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
 DEFAULT_OLLAMA_PROCESS_NAME = "ollama.exe" if os.name == "nt" else "ollama"
 OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", DEFAULT_OLLAMA_PROCESS_NAME)
+OLLAMA_MANAGED_BY_SERVICE = os.getenv("OLLAMA_MANAGED_BY_SERVICE", "0") not in {"0", "false", "False"}
 OLLAMA_REQUIRE_SERVE = os.getenv("OLLAMA_REQUIRE_SERVE", "1") not in {"0", "false", "False"}
 OLLAMA_STOP_SCOPE = os.getenv("OLLAMA_STOP_SCOPE", "all").lower()
 
@@ -138,11 +139,28 @@ def current_status() -> dict:
         "pids": [proc.pid for proc in processes],
         "ollama_host": OLLAMA_HOST,
         "ollama_port": OLLAMA_PORT,
+        "managed_by_service": OLLAMA_MANAGED_BY_SERVICE,
     }
+
+
+def _schedule_service_restart(delay_seconds: float = 0.2) -> None:
+    def _exit_process() -> None:
+        os._exit(1)
+
+    timer = threading.Timer(delay_seconds, _exit_process)
+    timer.daemon = True
+    timer.start()
 
 
 def start_ollama() -> dict:
     status = current_status()
+    if OLLAMA_MANAGED_BY_SERVICE:
+        return {
+            "status": "service_managed",
+            "message": "Ollama is managed by the service lifecycle. Start or restart the service instead.",
+            **status,
+        }
+
     if status["running"]:
         return {"status": "already_running", **status}
 
@@ -187,6 +205,13 @@ def start_ollama() -> dict:
 
 def stop_ollama() -> dict:
     status = current_status()
+    if OLLAMA_MANAGED_BY_SERVICE:
+        return {
+            "status": "service_managed",
+            "message": "Ollama is managed by the service lifecycle. Stop the service to stop Ollama.",
+            **status,
+        }
+
     if not status["running"]:
         return {"status": "already_stopped", **status}
 
@@ -220,6 +245,43 @@ def stop_ollama() -> dict:
     time.sleep(0.4)
     status = current_status()
     return {"status": "stopped", **status}
+
+
+def restart_ollama() -> dict:
+    status = current_status()
+
+    if OLLAMA_MANAGED_BY_SERVICE:
+        write_state(
+            {
+                "last_action": "restart",
+                "last_pid": status["pids"][0] if status["pids"] else None,
+                "last_restarted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        )
+        _schedule_service_restart()
+        return {
+            "status": "restarting",
+            "message": "Service-managed restart requested. The service will reconnect after systemd restarts it.",
+            **status,
+        }
+
+    was_running = status["running"]
+    if was_running:
+        stop_result = stop_ollama()
+        if stop_result.get("running"):
+            return {
+                "status": "error",
+                "message": "Failed to stop Ollama before restart.",
+                **stop_result,
+            }
+
+    start_result = start_ollama()
+    restart_status = "restarted" if was_running else start_result.get("status", "started")
+    return {
+        **start_result,
+        "status": restart_status,
+        "message": "Ollama restart requested.",
+    }
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
@@ -526,6 +588,11 @@ def api_start():
 @app.post("/api/stop")
 def api_stop():
     return jsonify(stop_ollama())
+
+
+@app.post("/api/restart")
+def api_restart():
+    return jsonify(restart_ollama())
 
 
 @app.get("/api/models")

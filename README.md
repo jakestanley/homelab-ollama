@@ -1,8 +1,9 @@
 # homelab-ollama
 
 Host service wrapper for a locally installed Ollama runtime. It exposes a
-minimal HTTP API and UI to start, stop, and query status, and to run JSONL
-batch jobs against the local Ollama HTTP API.
+minimal HTTP API and UI to query status and run JSONL batch jobs against the
+local Ollama HTTP API. In Linux systemd installs, `ollama serve` is part of the
+service lifecycle and is kept running while the service is active.
 
 Canonical standards live in the sibling repository `homelab-standards`.
 
@@ -16,7 +17,9 @@ Canonical standards live in the sibling repository `homelab-standards`.
 
 The canonical generic Linux entrypoint is `scripts/up.sh`. It runs the app with
 an explicit interpreter path and does not rely on shell startup files or
-virtualenv activation side effects.
+virtualenv activation side effects. When `OLLAMA_MANAGED_BY_SERVICE=1`,
+`scripts/up.sh` supervises both the Flask app and `ollama serve`, and the unit
+fails if either process exits unexpectedly.
 
 Mutable state is controlled by `STATE_DIR`, so Linux host installs and future
 packaged deployments can keep writable state outside the repo checkout.
@@ -26,8 +29,9 @@ packaged deployments can keep writable state outside the repo checkout.
 ### Runtime control
 
 - `GET /api/status` -> running state + PIDs
-- `POST /api/start` -> start Ollama (idempotent)
-- `POST /api/stop` -> stop Ollama (idempotent)
+- `POST /api/restart` -> restart Ollama; in service-managed mode this restarts the surrounding service so `ollama serve` and the web app come back together
+- `POST /api/start` -> start Ollama when API-controlled; returns `service_managed` when the service owns the runtime
+- `POST /api/stop` -> stop Ollama when API-controlled; returns `service_managed` when the service owns the runtime
 
 ### Models
 
@@ -48,7 +52,9 @@ Job state is stored under `STATE_DIR/jobs/<id>/`.
 
 ## UI
 
-Visit `/` to view the control panel and JSONL batch processor.
+Visit `/` to view the control panel and JSONL batch processor. The web UI exposes
+status, restart, and job controls; it does not expose separate start/stop
+buttons.
 
 ## Dependencies
 
@@ -95,7 +101,8 @@ Copy-Item .env.example .env
 
 Set `SERVICE_PORT` in `.env` to the value managed in `homelab-infra`. For Linux
 systemd installs, also set an absolute `STATE_DIR` and, if needed, `PYTHON_BIN`
-and `OLLAMA_EXE`.
+and `OLLAMA_EXE`. Leave `OLLAMA_MANAGED_BY_SERVICE=0` for local/manual runs
+unless you explicitly want `scripts/up.sh` to supervise `ollama serve`.
 
 ## Linux systemd install
 
@@ -135,6 +142,11 @@ python3 -m venv .venv
 sudo cp /srv/homelab-ollama/systemd/homelab-ollama.env.example /etc/homelab-ollama/homelab-ollama.env
 sudo editor /etc/homelab-ollama/homelab-ollama.env
 ```
+
+The shipped systemd env template sets `OLLAMA_MANAGED_BY_SERVICE=1`, so
+`ollama serve` is started and monitored by the unit itself. Stopping the unit
+stops Ollama; if `ollama serve` exits unexpectedly, the unit fails and
+systemd restart policy applies.
 
 4. Install and start the unit:
 
@@ -182,6 +194,7 @@ Key env vars:
 - `SERVICE_PORT`
 - `PYTHON_BIN`
 - `OLLAMA_EXE`
+- `OLLAMA_MANAGED_BY_SERVICE`
 - `OLLAMA_PROCESS_NAME`
 - `STATE_DIR`
 - `MAX_UPLOAD_MB`
@@ -190,6 +203,7 @@ Key env vars:
 ## Notes
 
 - On Linux, the default Ollama process name is `ollama`; on Windows it remains `ollama.exe`.
+- For Linux systemd installs, `OLLAMA_MANAGED_BY_SERVICE=1` is the intended mode so the service and `ollama serve` share one lifecycle.
 - If Ollama is installed via Scoop or user PATH, NSSM running as LocalSystem may not find it; set `OLLAMA_EXE` to a full path or run the service as your user.
 - Ollama listens on its own port (default `11434`); this service only controls the local process and proxies nothing.
 - JSONL jobs call the local Ollama HTTP API per line; keep prompts concise for performance.
