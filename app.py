@@ -143,6 +143,14 @@ def current_status() -> dict:
     }
 
 
+def _ollama_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    if not env.get("HOME"):
+        ensure_state_dir()
+        env["HOME"] = str(STATE_DIR)
+    return env
+
+
 def _schedule_service_restart(delay_seconds: float = 0.2) -> None:
     def _exit_process() -> None:
         os._exit(1)
@@ -184,6 +192,7 @@ def start_ollama() -> dict:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creation_flags,
+            env=_ollama_subprocess_env(),
         )
     except FileNotFoundError:
         return {"status": "error", "error": f"Ollama executable not found: {OLLAMA_EXE}"}
@@ -369,6 +378,7 @@ def _pull_model_cli(model: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=60 * 60,
+            env=_ollama_subprocess_env(),
         )
     except FileNotFoundError:
         return False, f"Ollama executable not found: {OLLAMA_EXE}"

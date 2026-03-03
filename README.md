@@ -19,7 +19,9 @@ The canonical generic Linux entrypoint is `scripts/up.sh`. It runs the app with
 an explicit interpreter path and does not rely on shell startup files or
 virtualenv activation side effects. When `OLLAMA_MANAGED_BY_SERVICE=1`,
 `scripts/up.sh` supervises both the Flask app and `ollama serve`, and the unit
-fails if either process exits unexpectedly.
+fails if either process exits unexpectedly. If `HOME` is unset in the service
+environment, the wrapper defaults it to `STATE_DIR` so Ollama CLI operations can
+resolve their writable runtime paths.
 
 Mutable state is controlled by `STATE_DIR`, so Linux host installs and future
 packaged deployments can keep writable state outside the repo checkout.

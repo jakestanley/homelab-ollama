@@ -36,6 +36,12 @@ if [[ ! -x "${python_bin}" ]]; then
   exit 1
 fi
 
+if [[ -z "${HOME:-}" ]]; then
+  runtime_home="${STATE_DIR:-${ROOT_DIR}/data}"
+  mkdir -p "${runtime_home}"
+  export HOME="${runtime_home}"
+fi
+
 is_true() {
   local value="${1:-}"
   case "${value}" in
