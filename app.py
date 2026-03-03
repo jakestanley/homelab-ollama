@@ -31,7 +31,8 @@ OLLAMA_EXE = os.getenv("OLLAMA_EXE", "ollama")
 OLLAMA_ARGS = os.getenv("OLLAMA_ARGS", "serve")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
-OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", "ollama.exe")
+DEFAULT_OLLAMA_PROCESS_NAME = "ollama.exe" if os.name == "nt" else "ollama"
+OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", DEFAULT_OLLAMA_PROCESS_NAME)
 OLLAMA_REQUIRE_SERVE = os.getenv("OLLAMA_REQUIRE_SERVE", "1") not in {"0", "false", "False"}
 OLLAMA_STOP_SCOPE = os.getenv("OLLAMA_STOP_SCOPE", "all").lower()
 
@@ -622,6 +623,11 @@ def index():
     return render_template("index.html")
 
 
-if __name__ == "__main__":
+def main() -> int:
     ensure_state_dir()
     app.run(host=SERVICE_HOST, port=SERVICE_PORT)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
