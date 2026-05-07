@@ -1,20 +1,30 @@
 services:
-  homelab-ollama:
-    build: .
+  ollama:
+    image: ollama/ollama
     restart: unless-stopped
-    env_file: .env
-    environment:
-      - OLLAMA_MANAGED_BY_SERVICE=1
-      - OLLAMA_HOST=0.0.0.0
-      - STATE_DIR=/data
-    ports:
-      - "${SERVICE_PORT:-5000}:${SERVICE_PORT:-5000}"
-      - "${OLLAMA_PORT:-11434}:${OLLAMA_PORT:-11434}"
     volumes:
-      - ${DATA_DIR:-/var/lib/homelab-ollama}:/data
       - ollama-models:/root/.ollama
     devices:
       - "nvidia.com/gpu=all"
+
+  homelab-ollama:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=20030
+      - STATE_DIR=/data
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+      - OLLAMA_MANAGED_BY_SERVICE=0
+      - MAX_UPLOAD_MB=50
+      - JOBS_MAX_WORKERS=1
+    ports:
+      - "20030:20030"
+    volumes:
+      - ${DATA_DIR:-/var/lib/homelab-ollama}:/data
 
 volumes:
   ollama-models:
