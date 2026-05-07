@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Homelab Ollama Control</title>
+    <title>Homelab Ollama</title>
     <style>
       :root {
         color-scheme: light;
@@ -44,25 +44,9 @@
         font-size: 28px;
       }
 
-      h2 {
-        margin: 0 0 8px;
-        font-size: 20px;
-      }
-
       .muted {
         color: var(--muted);
         margin: 0 0 20px;
-      }
-
-      .status {
-        display: grid;
-        gap: 8px;
-        margin-bottom: 20px;
-        font-size: 16px;
-      }
-
-      .status span {
-        font-weight: 600;
       }
 
       .actions {
@@ -89,12 +73,6 @@
         background: var(--accent);
         color: white;
         box-shadow: 0 6px 14px rgba(43, 109, 246, 0.25);
-      }
-
-      .danger {
-        background: #fef0f0;
-        color: var(--danger);
-        border: 1px solid rgba(198, 40, 40, 0.2);
       }
 
       .outline {
@@ -193,24 +171,7 @@
   <body>
     <main>
       <div class="card">
-        <h1>Ollama Control</h1>
-        <p class="muted">Restart and check the local Ollama runtime.</p>
-        <div class="status" id="status">
-          <div>Overall: <span id="overall">Loading...</span></div>
-          <div>Process: <span id="process">Loading...</span></div>
-          <div>Port: <span id="port">Loading...</span></div>
-          <div>PIDs: <span id="pids">Loading...</span></div>
-          <div>Control Mode: <span id="control-mode">Loading...</span></div>
-        </div>
-        <div class="actions">
-          <button class="primary" id="restart">Restart</button>
-          <button class="outline" id="refresh">Refresh</button>
-        </div>
-        <div class="log" id="log">Waiting for action...</div>
-      </div>
-
-      <div class="card">
-        <h2>JSONL Batch Processor</h2>
+        <h1>JSONL Batch Processor</h1>
         <p class="muted">
           Upload a JSONL file, provide a prompt, choose a model, and run a background job. When complete, download the
           processed JSONL.
@@ -266,14 +227,6 @@
     </main>
 
     <script>
-      const overall = document.getElementById("overall");
-      const process = document.getElementById("process");
-      const port = document.getElementById("port");
-      const pids = document.getElementById("pids");
-      const controlMode = document.getElementById("control-mode");
-      const log = document.getElementById("log");
-      const restartButton = document.getElementById("restart");
-
       const jobLog = document.getElementById("job-log");
       const jobStatusPill = document.getElementById("job-status");
       const jobIdInput = document.getElementById("job-id");
@@ -291,44 +244,6 @@
         el.textContent = text;
         el.classList.remove("ok", "warn", "bad");
         if (kind) el.classList.add(kind);
-      };
-
-      const updateStatus = (payload) => {
-        overall.textContent = payload.running ? "Running" : "Stopped";
-        process.textContent = payload.process_running ? "Active" : "Not detected";
-        port.textContent = payload.port_open ? `Open (${payload.ollama_host}:${payload.ollama_port})` : "Closed";
-        pids.textContent = payload.pids.length ? payload.pids.join(", ") : "-";
-        controlMode.textContent = payload.managed_by_service ? "Service-managed" : "API-controlled";
-      };
-
-      const requestStatus = async (endpoint, method = "GET") => {
-        try {
-          const response = await fetch(endpoint, { method });
-          const payload = await response.json();
-          updateStatus(payload);
-          log.textContent = `${new Date().toLocaleTimeString()} -> ${payload.status || "status"}${payload.message ? `\n${payload.message}` : ""}`;
-          return payload;
-        } catch (err) {
-          log.textContent = `${new Date().toLocaleTimeString()} -> request failed\n${String(err)}`;
-          throw err;
-        }
-      };
-
-      const requestRestart = async () => {
-        restartButton.disabled = true;
-        try {
-          await requestStatus("/api/restart", "POST");
-        } catch (_) {
-          log.textContent = `${new Date().toLocaleTimeString()} -> restart requested\nWaiting for service to come back...`;
-        }
-
-        setTimeout(async () => {
-          try {
-            await requestStatus("/api/status");
-          } finally {
-            restartButton.disabled = false;
-          }
-        }, 3000);
       };
 
       const refreshModels = async () => {
@@ -421,9 +336,6 @@
         pollTimer = setInterval(update, 1500);
       };
 
-      restartButton.addEventListener("click", () => requestRestart());
-      document.getElementById("refresh").addEventListener("click", () => requestStatus("/api/status"));
-
       document.getElementById("models-refresh").addEventListener("click", (e) => {
         e.preventDefault();
         refreshModels();
@@ -471,7 +383,6 @@
         await pollJob(id);
       });
 
-      requestStatus("/api/status");
       refreshModels();
     </script>
   </body>

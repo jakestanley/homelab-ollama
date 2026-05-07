@@ -1,10 +1,7 @@
 import json
 import os
 import re
-import shlex
-import shutil
 import socket
-import subprocess
 import threading
 import time
 import uuid
@@ -12,7 +9,6 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-import psutil
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, render_template, request, send_file
 
@@ -21,23 +17,13 @@ load_dotenv()
 
 APP_ROOT = Path(__file__).resolve().parent
 STATE_DIR = Path(os.getenv("STATE_DIR", str(APP_ROOT / "data")))
-STATE_FILE = STATE_DIR / "state.json"
 JOBS_DIR = STATE_DIR / "jobs"
 
 SERVICE_HOST = os.getenv("SERVICE_HOST", "127.0.0.1")
 SERVICE_PORT = int(os.getenv("SERVICE_PORT", "5000"))
 
-OLLAMA_EXE = os.getenv("OLLAMA_EXE", "ollama")
-OLLAMA_ARGS = os.getenv("OLLAMA_ARGS", "serve")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
 OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
-DEFAULT_OLLAMA_PROCESS_NAME = "ollama.exe" if os.name == "nt" else "ollama"
-OLLAMA_PROCESS_NAME = os.getenv("OLLAMA_PROCESS_NAME", DEFAULT_OLLAMA_PROCESS_NAME)
-OLLAMA_MANAGED_BY_SERVICE = os.getenv("OLLAMA_MANAGED_BY_SERVICE", "0") not in {"0", "false", "False"}
-OLLAMA_REQUIRE_SERVE = os.getenv("OLLAMA_REQUIRE_SERVE", "1") not in {"0", "false", "False"}
-OLLAMA_STOP_SCOPE = os.getenv("OLLAMA_STOP_SCOPE", "all").lower()
-
-STOP_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_STOP_TIMEOUT", "8"))
 
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
 JOBS_MAX_WORKERS = int(os.getenv("JOBS_MAX_WORKERS", "1"))
@@ -55,20 +41,6 @@ class JobNotFound(KeyError):
 
 
 app = Flask(__name__)
-
-
-def _resolve_executable(exe: str) -> str | None:
-    exe = (exe or "").strip()
-    if not exe:
-        return None
-
-    p = Path(exe)
-    if p.is_absolute() or ("\\" in exe) or ("/" in exe):
-        return str(p) if p.exists() else None
-
-    resolved = shutil.which(exe)
-    return resolved
-
 app.config["MAX_CONTENT_LENGTH"] = int(MAX_UPLOAD_MB * 1024 * 1024)
 
 
@@ -77,220 +49,12 @@ def ensure_state_dir() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def read_state() -> dict:
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def write_state(data: dict) -> None:
-    ensure_state_dir()
-    tmp_path = STATE_FILE.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp_path.replace(STATE_FILE)
-
-
-def _is_serve_cmd(cmdline: list[str]) -> bool:
-    for arg in cmdline:
-        value = arg.lower()
-        if value == "serve" or value.endswith("\\serve") or value.endswith("/serve"):
-            return True
-    return False
-
-
-def list_ollama_processes() -> list[psutil.Process]:
-    matches = []
-    name_match = OLLAMA_PROCESS_NAME.lower()
-    for proc in psutil.process_iter(["pid", "name", "exe", "cmdline"]):
-        try:
-            info = proc.info
-            proc_name = (info.get("name") or "").lower()
-            proc_exe = (Path(info["exe"]).name.lower() if info.get("exe") else "")
-            if name_match not in {proc_name, proc_exe}:
-                continue
-            cmdline = info.get("cmdline") or []
-            if OLLAMA_REQUIRE_SERVE and cmdline and not _is_serve_cmd(cmdline):
-                continue
-            matches.append(proc)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return matches
-
-
 def port_open(host: str, port: int, timeout: float = 0.4) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
-
-
-def current_status() -> dict:
-    processes = list_ollama_processes()
-    process_running = bool(processes)
-    port_reachable = port_open(OLLAMA_HOST, OLLAMA_PORT)
-    return {
-        "running": process_running or port_reachable,
-        "process_running": process_running,
-        "port_open": port_reachable,
-        "pids": [proc.pid for proc in processes],
-        "ollama_host": OLLAMA_HOST,
-        "ollama_port": OLLAMA_PORT,
-        "managed_by_service": OLLAMA_MANAGED_BY_SERVICE,
-    }
-
-
-def _ollama_subprocess_env() -> dict[str, str]:
-    env = os.environ.copy()
-    if not env.get("HOME"):
-        ensure_state_dir()
-        env["HOME"] = str(STATE_DIR)
-    return env
-
-
-def _schedule_service_restart(delay_seconds: float = 0.2) -> None:
-    def _exit_process() -> None:
-        os._exit(1)
-
-    timer = threading.Timer(delay_seconds, _exit_process)
-    timer.daemon = True
-    timer.start()
-
-
-def start_ollama() -> dict:
-    status = current_status()
-    if OLLAMA_MANAGED_BY_SERVICE:
-        return {
-            "status": "service_managed",
-            "message": "Ollama is managed by the service lifecycle. Start or restart the service instead.",
-            **status,
-        }
-
-    if status["running"]:
-        return {"status": "already_running", **status}
-
-    resolved_exe = _resolve_executable(OLLAMA_EXE)
-    if not resolved_exe:
-        return {
-            "status": "error",
-            "error": f"Ollama executable not found: {OLLAMA_EXE}. "
-            "Set OLLAMA_EXE in .env to a full path, especially when running as a Windows service.",
-        }
-
-    args = [resolved_exe] + shlex.split(OLLAMA_ARGS)
-    creation_flags = 0
-    if os.name == "nt":
-        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-
-    try:
-        proc = subprocess.Popen(
-            args,
-            cwd=str(APP_ROOT),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creation_flags,
-            env=_ollama_subprocess_env(),
-        )
-    except FileNotFoundError:
-        return {"status": "error", "error": f"Ollama executable not found: {OLLAMA_EXE}"}
-    except OSError as exc:
-        return {"status": "error", "error": str(exc)}
-
-    write_state(
-        {
-            "last_action": "start",
-            "last_pid": proc.pid,
-            "last_started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        }
-    )
-
-    time.sleep(0.6)
-    status = current_status()
-    return {"status": "started", **status}
-
-
-def stop_ollama() -> dict:
-    status = current_status()
-    if OLLAMA_MANAGED_BY_SERVICE:
-        return {
-            "status": "service_managed",
-            "message": "Ollama is managed by the service lifecycle. Stop the service to stop Ollama.",
-            **status,
-        }
-
-    if not status["running"]:
-        return {"status": "already_stopped", **status}
-
-    processes = list_ollama_processes()
-    if OLLAMA_STOP_SCOPE == "pidfile":
-        state = read_state()
-        pid = state.get("last_pid")
-        processes = [proc for proc in processes if proc.pid == pid]
-
-    for proc in processes:
-        try:
-            proc.terminate()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-    _, alive = psutil.wait_procs(processes, timeout=STOP_TIMEOUT_SECONDS)
-    for proc in alive:
-        try:
-            proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-    write_state(
-        {
-            "last_action": "stop",
-            "last_pid": status["pids"][0] if status["pids"] else None,
-            "last_stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        }
-    )
-
-    time.sleep(0.4)
-    status = current_status()
-    return {"status": "stopped", **status}
-
-
-def restart_ollama() -> dict:
-    status = current_status()
-
-    if OLLAMA_MANAGED_BY_SERVICE:
-        write_state(
-            {
-                "last_action": "restart",
-                "last_pid": status["pids"][0] if status["pids"] else None,
-                "last_restarted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-        )
-        _schedule_service_restart()
-        return {
-            "status": "restarting",
-            "message": "Service-managed restart requested. The service will reconnect after systemd restarts it.",
-            **status,
-        }
-
-    was_running = status["running"]
-    if was_running:
-        stop_result = stop_ollama()
-        if stop_result.get("running"):
-            return {
-                "status": "error",
-                "message": "Failed to stop Ollama before restart.",
-                **stop_result,
-            }
-
-    start_result = start_ollama()
-    restart_status = "restarted" if was_running else start_result.get("status", "started")
-    return {
-        **start_result,
-        "status": restart_status,
-        "message": "Ollama restart requested.",
-    }
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
@@ -443,7 +207,7 @@ class JobRunner:
 
         if not port_open(OLLAMA_HOST, OLLAMA_PORT):
             meta["status"] = "failed"
-            meta["message"] = f"Ollama API not reachable at {OLLAMA_HOST}:{OLLAMA_PORT}. Start Ollama first."
+            meta["message"] = f"Ollama API not reachable at {OLLAMA_HOST}:{OLLAMA_PORT}."
             meta["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             _write_job(job_id, meta)
             return
@@ -567,26 +331,6 @@ class JobRunner:
 
 
 JOB_RUNNER = JobRunner(max_workers=JOBS_MAX_WORKERS)
-
-
-@app.get("/api/status")
-def api_status():
-    return jsonify(current_status())
-
-
-@app.post("/api/start")
-def api_start():
-    return jsonify(start_ollama())
-
-
-@app.post("/api/stop")
-def api_stop():
-    return jsonify(stop_ollama())
-
-
-@app.post("/api/restart")
-def api_restart():
-    return jsonify(restart_ollama())
 
 
 @app.get("/api/models")
