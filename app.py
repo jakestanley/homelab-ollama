@@ -370,28 +370,12 @@ def list_cached_models() -> list[str]:
     return sorted(set(models))
 
 
-def _pull_model_cli(model: str) -> tuple[bool, str]:
+def _pull_model_api(model: str) -> tuple[bool, str]:
     try:
-        result = subprocess.run(
-            [_resolve_executable(OLLAMA_EXE) or OLLAMA_EXE, "pull", model],
-            cwd=str(APP_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=60 * 60,
-            env=_ollama_subprocess_env(),
-        )
-    except FileNotFoundError:
-        return False, f"Ollama executable not found: {OLLAMA_EXE}"
-    except subprocess.TimeoutExpired:
-        return False, "Model pull timed out"
-    except OSError as exc:
+        _ollama_json("POST", "/api/pull", payload={"name": model, "stream": False}, timeout=60 * 60)
+    except OllamaUnavailable as exc:
         return False, str(exc)
-
-    output = (result.stdout or "").strip()
-    err = (result.stderr or "").strip()
-    if result.returncode != 0:
-        return False, err or output or f"ollama pull exited {result.returncode}"
-    return True, output or "ok"
+    return True, "ok"
 
 
 def _coerce_bool(value: str | None, default: bool = False) -> bool:
@@ -474,7 +458,7 @@ class JobRunner:
                 meta["status"] = "pulling_model"
                 meta["message"] = f"Pulling model: {model}"
                 _write_job(job_id, meta)
-                ok, pull_message = _pull_model_cli(model)
+                ok, pull_message = _pull_model_api(model)
                 if not ok:
                     meta["status"] = "failed"
                     meta["message"] = pull_message
