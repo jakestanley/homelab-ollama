@@ -16,6 +16,18 @@ if [[ -f "${ENV_FILE}" && -z "${INVOCATION_ID:-}" ]]; then
   set +a
 fi
 
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  system_python="$(command -v python3 || true)"
+  if [[ -z "${system_python}" ]]; then
+    echo "python3 not found. Cannot create venv. Set PYTHON_BIN to an absolute interpreter path." >&2
+    exit 1
+  fi
+  if [[ ! -d "${ROOT_DIR}/.venv" ]]; then
+    "${system_python}" -m venv "${ROOT_DIR}/.venv"
+  fi
+  "${ROOT_DIR}/.venv/bin/pip" install -q -r "${ROOT_DIR}/requirements.txt"
+fi
+
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   python_bin="${PYTHON_BIN}"
 elif [[ -x "${DEFAULT_VENV_PYTHON}" ]]; then
