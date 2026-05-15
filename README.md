@@ -81,8 +81,8 @@ The Windows NSSM service reads all vars from `.env`.
 | Variable | Default | Description |
 |---|---|---|
 | `DATA_DIR` | `/var/lib/homelab-ollama` | Host path for job state (Docker Compose only) |
+| `SERVICE_PORT` | `20030` | Port to listen on (both modes; must match homelab-infra/registry.yaml) |
 | `SERVICE_HOST` | `127.0.0.1` | Interface to listen on |
-| `SERVICE_PORT` | `5000` | Port to listen on |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama host |
 | `OLLAMA_PORT` | `11434` | Ollama port |
 | `OLLAMA_EXE` | `ollama` | Ollama executable (Windows; prefer full path under NSSM) |

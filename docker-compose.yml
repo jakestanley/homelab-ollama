@@ -14,7 +14,7 @@ services:
       - ollama
     environment:
       - SERVICE_HOST=0.0.0.0
-      - SERVICE_PORT=20030
+      - SERVICE_PORT=${SERVICE_PORT:-20030}
       - STATE_DIR=/data
       - OLLAMA_HOST=ollama
       - OLLAMA_PORT=11434
@@ -22,7 +22,7 @@ services:
       - MAX_UPLOAD_MB=50
       - JOBS_MAX_WORKERS=1
     ports:
-      - "20030:20030"
+      - "${SERVICE_PORT:-20030}:${SERVICE_PORT:-20030}"
     volumes:
       - ${DATA_DIR:-/var/lib/homelab-ollama}:/data
 
