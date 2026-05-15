@@ -52,13 +52,6 @@ Ollama must be installed and running separately on Windows. The app expects it a
 
 ## API
 
-### Runtime control
-
-- `GET /api/status` — running state and PIDs
-- `POST /api/start` — start Ollama (API-controlled mode only)
-- `POST /api/stop` — stop Ollama (API-controlled mode only)
-- `POST /api/restart` — restart Ollama
-
 ### Models
 
 - `GET /api/models` — list cached models
@@ -81,19 +74,19 @@ Visit `/` for the control panel and JSONL batch processor.
 
 ## Config
 
-`.env` is used by the Windows NSSM service only. Docker Compose has all values hardcoded.
+Docker Compose app vars are hardcoded in `docker-compose.yml`. Only `DATA_DIR` is read from the environment (or `.env`) to set the host volume mount path.
 
-Key env vars:
+The Windows NSSM service reads all vars from `.env`.
 
 | Variable | Default | Description |
 |---|---|---|
+| `DATA_DIR` | `/var/lib/homelab-ollama` | Host path for job state (Docker Compose only) |
 | `SERVICE_HOST` | `127.0.0.1` | Interface to listen on |
 | `SERVICE_PORT` | `5000` | Port to listen on |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama host |
 | `OLLAMA_PORT` | `11434` | Ollama port |
 | `OLLAMA_EXE` | `ollama` | Ollama executable (Windows; prefer full path under NSSM) |
-| `OLLAMA_MANAGED_BY_SERVICE` | `0` | Set to `1` to have this service manage the Ollama process |
-| `STATE_DIR` | `data` | Path for job state storage |
+| `STATE_DIR` | `data` | Path for job state storage (NSSM) / `/data` (Docker Compose) |
 | `MAX_UPLOAD_MB` | `50` | Max JSONL upload size |
 | `JOBS_MAX_WORKERS` | `1` | Max concurrent jobs |
 
