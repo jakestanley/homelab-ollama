@@ -1,139 +1,151 @@
+param(
+    [switch]$Restart
+)
+
 $ErrorActionPreference = "Stop"
 
-$root = Split-Path -Parent $PSScriptRoot
-$venvPython = Join-Path $root ".venv\Scripts\python.exe"
+# --- per-repo config ---
+$DefaultServiceName = "homelab-ollama"
+$DefaultDisplayName = "homelab-ollama"
+$DefaultDescription = "Controls local Ollama runtime via HTTP API"
+$PythonExeEnvKey    = "OLLAMA_PYTHON_EXE"
+$PortEnvKey         = "SERVICE_PORT"
+$DefaultPort        = "20030"
+$AppParameters      = "app.py"
+# -----------------------
 
-if (-not (Test-Path $venvPython)) {
-  Write-Error "Missing virtualenv at .venv. Create it with: python -m venv .venv"
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
+
+function Get-DotEnvLines {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @() }
+    return @(Get-Content $Path | Where-Object {
+        $_ -and ($_ -notmatch '^\s*#') -and ($_ -match '=')
+    })
 }
 
-$envFile = Join-Path $root ".env"
-if (-not (Test-Path $envFile)) {
-  Write-Warning "Missing .env file; copy .env.example and update SERVICE_PORT."
-}
-
-$repoName = Split-Path -Leaf $root
-
-function Get-EnvValue {
-  param(
-    [string]$Path,
-    [string]$Key
-  )
-
-  if (-not (Test-Path $Path)) {
-    return $null
-  }
-
-  foreach ($line in Get-Content -Path $Path) {
-    if ($line -match '^\s*#') { continue }
-    if ($line -match '^\s*$') { continue }
-    if ($line -match "^\s*${Key}\s*=\s*(.+)\s*$") {
-      return $Matches[1].Trim()
-    }
-  }
-
-  return $null
-}
-
-function Test-IsAdministrator {
-  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Test-PrivateTcpFirewallRuleExists {
-  param(
-    [string]$Port
-  )
-
-  function Test-PortMatch {
-    param(
-      [string]$LocalPort,
-      [string]$TargetPort
-    )
-
-    if (-not $LocalPort -or $LocalPort -eq "Any") {
-      return $false
-    }
-
-    if ($LocalPort -eq $TargetPort) {
-      return $true
-    }
-
-    if ($LocalPort -match ',') {
-      foreach ($part in ($LocalPort -split ',')) {
-        if (Test-PortMatch -LocalPort $part.Trim() -TargetPort $TargetPort) {
-          return $true
+function Get-DotEnvValue {
+    param([string]$Path, [string]$Key, [string]$Default)
+    foreach ($line in (Get-DotEnvLines $Path)) {
+        $parts = $line -split '=', 2
+        if ($parts.Count -eq 2 -and $parts[0].Trim() -eq $Key) {
+            return $parts[1].Trim()
         }
-      }
     }
-
-    if ($LocalPort -match '^\d+-\d+$') {
-      $bounds = $LocalPort -split '-'
-      $start = [int]$bounds[0]
-      $end = [int]$bounds[1]
-      $value = [int]$TargetPort
-      if ($value -ge $start -and $value -le $end) {
-        return $true
-      }
-    }
-
-    return $false
-  }
-
-  $portFilters = Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {
-    Test-PortMatch -LocalPort $_.LocalPort -TargetPort $Port
-  }
-  if (-not $portFilters) {
-    return $false
-  }
-
-  $rules = Get-NetFirewallRule -AssociatedNetFirewallPortFilter $portFilters -ErrorAction SilentlyContinue
-  foreach ($rule in $rules) {
-    if ($rule.Direction -ne "Inbound") {
-      continue
-    }
-
-    if ($rule.Profile -eq "Any" -or $rule.Profile -match "Private") {
-      return $true
-    }
-  }
-
-  return $false
+    return $Default
 }
 
-$servicePort = Get-EnvValue -Path $envFile -Key "SERVICE_PORT"
-if (-not $servicePort -and $env:SERVICE_PORT) {
-  $servicePort = $env:SERVICE_PORT
+function Test-IsAdmin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-if ($servicePort) {
-  $ruleName = "$repoName ($servicePort)"
-  $firewallCommand = "New-NetFirewallRule -DisplayName `"$ruleName`" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private"
-
-  if (-not (Test-IsAdministrator)) {
-    Write-Warning "Not running elevated; Windows Firewall rule not ensured."
-    Write-Host "Run in an elevated PowerShell to create the inbound rule:"
-    Write-Host $firewallCommand
-  } else {
-    if (-not (Test-PrivateTcpFirewallRuleExists -Port $servicePort)) {
-      New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $servicePort -Profile Private | Out-Null
+function Ensure-FirewallRule {
+    param([string]$Port, [string]$RuleName)
+    if (-not $Port) { return }
+    if (-not (Test-IsAdmin)) {
+        Write-Warning "Not elevated; firewall rule for TCP $Port may be missing."
+        Write-Host "Run elevated: New-NetFirewallRule -DisplayName `"$RuleName`" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Private"
+        return
     }
-  }
-} else {
-  Write-Warning "SERVICE_PORT is not set; skipping Windows Firewall rule check."
+    $existing = Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue
+    if (-not $existing) {
+        New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Action Allow `
+            -Protocol TCP -LocalPort $Port -Profile Private | Out-Null
+    }
 }
 
+function Resolve-BootstrapPython {
+    param([string]$EnvFile, [string]$EnvKey)
+    $candidate = Get-DotEnvValue $EnvFile $EnvKey $null
+    if (-not $candidate -and $EnvKey) { $candidate = (Get-Item "Env:$EnvKey" -ErrorAction SilentlyContinue).Value }
+    if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $py = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($py) { return $py.Source }
+    throw "Python interpreter not found. Set $EnvKey in .env to a full path."
+}
 
-# Ensure OLLAMA_EXE is resolvable in this environment (Windows services often do not inherit user PATH).
-$ollamaExe = Get-EnvValue -Path $envFile -Key "OLLAMA_EXE"
-if (-not $ollamaExe -and $env:OLLAMA_EXE) { $ollamaExe = $env:OLLAMA_EXE }
+# --- main ---
+$envFile = Join-Path $RepoRoot ".env"
+if (-not (Test-Path $envFile)) {
+    Write-Warning "Missing .env; copy .env.example to .env and edit before running."
+}
+
+$serviceName = Get-DotEnvValue $envFile "NSSM_SERVICE_NAME" $DefaultServiceName
+$displayName = Get-DotEnvValue $envFile "NSSM_DISPLAY_NAME" $DefaultDisplayName
+$description = Get-DotEnvValue $envFile "NSSM_DESCRIPTION" $DefaultDescription
+
+if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
+    throw "nssm not found in PATH. Install NSSM and retry."
+}
+
+$venvPath   = Join-Path $RepoRoot ".venv"
+$venvPython = Join-Path $venvPath "Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    $bootstrap = Resolve-BootstrapPython -EnvFile $envFile -EnvKey $PythonExeEnvKey
+    Write-Host "Creating venv with $bootstrap"
+    if ($bootstrap -match 'py(\.exe)?$') {
+        & $bootstrap -3 -m venv $venvPath
+    } else {
+        & $bootstrap -m venv $venvPath
+    }
+    if (-not (Test-Path $venvPython)) { throw "venv creation failed at $venvPath" }
+}
+
+& $venvPython -m pip install --upgrade pip
+& $venvPython -m pip install -r (Join-Path $RepoRoot "requirements.txt")
+
+$port = Get-DotEnvValue $envFile $PortEnvKey $DefaultPort
+Ensure-FirewallRule -Port $port -RuleName "$serviceName ($port)"
+
+# Auto-detect OLLAMA_EXE if not set so NSSM (often LocalSystem) can find it.
+$ollamaExe = Get-DotEnvValue $envFile "OLLAMA_EXE" $null
+$ollamaAutoLine = $null
 if (-not $ollamaExe) {
-  $cmd = Get-Command ollama.exe -ErrorAction SilentlyContinue
-  if ($cmd -and $cmd.Source) {
-    $env:OLLAMA_EXE = $cmd.Source
-  } else {
-    Write-Warning "ollama.exe not found on PATH for this process. If running via NSSM, set OLLAMA_EXE to a full path in .env or run the service as the user that has ollama installed."
-  }
+    $cmd = Get-Command ollama.exe -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) {
+        $ollamaAutoLine = "OLLAMA_EXE=$($cmd.Source)"
+        Write-Host "Auto-detected ollama.exe at $($cmd.Source)"
+    } else {
+        Write-Warning "OLLAMA_EXE not set and ollama.exe not found on PATH. Set OLLAMA_EXE in .env to a full path."
+    }
 }
-& $venvPython (Join-Path $root "app.py")
+
+$logsDir = Join-Path $RepoRoot "logs"
+New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+
+$svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+if (-not $svc) {
+    & nssm install $serviceName $venvPython $AppParameters | Out-Null
+}
+
+& nssm set $serviceName Application $venvPython | Out-Null
+& nssm set $serviceName AppParameters $AppParameters | Out-Null
+& nssm set $serviceName AppDirectory $RepoRoot | Out-Null
+& nssm set $serviceName DisplayName $displayName | Out-Null
+& nssm set $serviceName Description $description | Out-Null
+& nssm set $serviceName AppStdout (Join-Path $logsDir "$serviceName-stdout.log") | Out-Null
+& nssm set $serviceName AppStderr (Join-Path $logsDir "$serviceName-stderr.log") | Out-Null
+
+$appEnvLines = @(Get-DotEnvLines $envFile | Where-Object { $_ -notmatch '^\s*NSSM_' })
+if ($ollamaAutoLine) { $appEnvLines = @($ollamaAutoLine) + $appEnvLines }
+if ($appEnvLines.Count -gt 0) {
+    & nssm set $serviceName AppEnvironmentExtra $appEnvLines | Out-Null
+} else {
+    & nssm reset $serviceName AppEnvironmentExtra 2>$null | Out-Null
+}
+
+$status = (& nssm status $serviceName).Trim()
+if ($status -eq "SERVICE_RUNNING") {
+    if ($Restart) {
+        & nssm restart $serviceName | Out-Null
+    }
+} else {
+    & nssm start $serviceName | Out-Null
+}
+
+Write-Host "Service '$serviceName' applied. Status: $((& nssm status $serviceName).Trim())"

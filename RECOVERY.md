@@ -26,15 +26,15 @@ Dependency checks:
 4. Restore the Linux host env file to `/etc/homelab-ollama/homelab-ollama.env`.
 5. Restore writable state at the configured `STATE_DIR`, typically `/var/lib/homelab-ollama`.
 6. Verify ownership of the repo checkout and writable state for the `homelab-ollama` service user/group.
-7. Verify env values, especially `SERVICE_PORT`, `PYTHON_BIN`, `OLLAMA_EXE`, and `STATE_DIR`.
+7. Verify env values, especially `SERVICE_PORT`, `OLLAMA_PYTHON_EXE`, `OLLAMA_EXE`, and `STATE_DIR`.
 8. Run `sudo systemctl daemon-reload`.
 9. Run `sudo systemctl enable --now homelab-ollama.service`.
 10. Verify with `systemctl status homelab-ollama.service`, `journalctl -u homelab-ollama.service -n 50`, and `GET /api/status`.
 
 Windows recovery remains:
 
-1. Verify `.env` values, especially `SERVICE_PORT` and `OLLAMA_EXE`.
-2. Restart the NSSM service for `homelab-ollama`.
+1. Verify `.env` values, especially `SERVICE_PORT`, `OLLAMA_PYTHON_EXE`, and `OLLAMA_EXE`.
+2. Run `.\scripts\up.ps1` (or `.\scripts\up.ps1 -Restart`) to apply config and (re)start the NSSM service.
 3. Validate `GET /api/status` reports `running: true` when Ollama is expected up.
 
 ## Verification steps
@@ -43,7 +43,7 @@ Windows recovery remains:
   - `getent passwd homelab-ollama`
   - `getent group homelab-ollama`
 - Verify the configured interpreter:
-  - `test -x "$(awk -F= '/^PYTHON_BIN=/{print $2}' /etc/homelab-ollama/homelab-ollama.env)"`
+  - `test -x "$(awk -F= '/^OLLAMA_PYTHON_EXE=/{print $2}' /etc/homelab-ollama/homelab-ollama.env)"`
 - Verify the unit file is installed:
   - `test -f /etc/systemd/system/homelab-ollama.service`
 - Verify the host env file is installed:

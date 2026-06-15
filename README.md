@@ -26,25 +26,33 @@ DATA_DIR=/your/path docker compose up -d --build
 
 ### Windows NSSM service (secondary)
 
-1. Install Python and create a virtualenv:
+`scripts/up.ps1` is the single idempotent entrypoint for service creation,
+updating, and starting. It creates the venv, installs requirements, ensures
+the Windows Firewall rule, and applies the NSSM service config.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-2. Copy and configure the env file:
+1. Copy and configure the env file:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env: set SERVICE_PORT to the value from homelab-infra/registry.yaml
+# Edit .env: set SERVICE_PORT, OLLAMA_PYTHON_EXE, and OLLAMA_EXE as needed.
 ```
 
-3. Install and start the NSSM service:
+2. Install / update / start (elevated PowerShell):
 
 ```powershell
-.\scripts\install-service.ps1 -Start
+.\scripts\up.ps1
+```
+
+Force restart if already running:
+
+```powershell
+.\scripts\up.ps1 -Restart
+```
+
+Uninstall:
+
+```powershell
+.\scripts\uninstall.ps1
 ```
 
 Ollama must be installed and running separately on Windows. The app expects it at
@@ -83,12 +91,16 @@ The Windows NSSM service reads all vars from `.env`.
 | `DATA_DIR` | `/var/lib/homelab-ollama` | Host path for job state (Docker Compose only) |
 | `SERVICE_PORT` | `20030` | Port to listen on (both modes; must match homelab-infra/registry.yaml) |
 | `SERVICE_HOST` | `127.0.0.1` | Interface to listen on |
+| `OLLAMA_PYTHON_EXE` | _(none)_ | Absolute Python path for `scripts/up.ps1` venv bootstrap |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama host |
 | `OLLAMA_PORT` | `11434` | Ollama port |
 | `OLLAMA_EXE` | `ollama` | Ollama executable (Windows; prefer full path under NSSM) |
 | `STATE_DIR` | `data` | Path for job state storage (NSSM) / `/data` (Docker Compose) |
 | `MAX_UPLOAD_MB` | `50` | Max JSONL upload size |
 | `JOBS_MAX_WORKERS` | `1` | Max concurrent jobs |
+| `NSSM_SERVICE_NAME` | `homelab-ollama` | Optional NSSM service name override |
+| `NSSM_DISPLAY_NAME` | `homelab-ollama` | Optional NSSM display name |
+| `NSSM_DESCRIPTION` | _(default text)_ | Optional NSSM description |
 
 ## Notes
 
